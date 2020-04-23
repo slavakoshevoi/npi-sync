@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "module": "es2015",
+    "target": "esnext",
+    "moduleResolution": "node",
+    "allowJs": true,
+    "noEmit": true,
+    "strict": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "noImplicitAny": false,
+    "sourceMap": true,
+    "typeRoots" : ["./types", "./node_modules/@types"],
+    "baseUrl": "./"
+  },
+  "exclude": [
+    "node_modules"
+  ]
+}

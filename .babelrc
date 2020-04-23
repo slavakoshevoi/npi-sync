@@ -1,0 +1,25 @@
+{
+  "presets": [
+    "@babel/env",
+    "@babel/preset-typescript"
+  ],
+  "sourceMaps": "inline",
+  "retainLines": true,
+  "plugins": [
+    ["module-resolver", {
+       "extensions": [".js", ".ts", ".tsx"]
+    }],
+    ["@babel/plugin-proposal-decorators", { "legacy": true }],
+    "@babel/plugin-transform-typescript",
+    "@babel/transform-arrow-functions",
+    "@babel/plugin-transform-runtime",
+    ["@babel/plugin-proposal-class-properties", { "loose" : false }],
+    "transform-function-bind",
+    ["babel-plugin-inline-import", {
+      "extensions": [
+        ".sql"
+      ]
+    }],
+    "@babel/plugin-proposal-optional-chaining"
+  ]
+}

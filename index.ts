@@ -1,0 +1,2 @@
+require('./registerBabel')
+require('./app')
