@@ -1,18 +1,27 @@
 import { exists, promises } from 'fs'
 import { promisify } from 'util'
 import axios from 'axios'
+import _ from 'lodash'
 import logger from '../logger'
 import donwload from '../utils/donwload'
 import { getState, STATE_KEYS } from '../utils/state'
 
 const downloadedFilesDir = './data'
 
-export default async () => {
+export default async stages => {
   const { LAST_DEACTIVATED, LAST_MONTHLY, LAST_WEEKLY } = getState()
 
-  await syncFile(STATE_KEYS.LAST_DEACTIVATED, LAST_DEACTIVATED)
-  await syncFile(STATE_KEYS.LAST_MONTHLY, LAST_MONTHLY)
-  await syncFile(STATE_KEYS.LAST_WEEKLY, LAST_WEEKLY)
+  if (_.includes(stages, STATE_KEYS.LAST_DEACTIVATED)) {
+    await syncFile(STATE_KEYS.LAST_DEACTIVATED, LAST_DEACTIVATED)
+  }
+
+  if (_.includes(stages, STATE_KEYS.LAST_MONTHLY)) {
+    await syncFile(STATE_KEYS.LAST_MONTHLY, LAST_MONTHLY)
+  }
+
+  if (_.includes(stages, STATE_KEYS.LAST_WEEKLY)) {
+    await syncFile(STATE_KEYS.LAST_WEEKLY, LAST_WEEKLY)
+  }
 
   async function syncFile(filename: string, download_url: string): Promise<void> {
     const fileDir = `${downloadedFilesDir}/${filename}.zip`

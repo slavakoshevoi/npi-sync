@@ -1,39 +1,48 @@
 import {
   createReadStream, createWriteStream, existsSync, mkdirSync, readdir, unlink, writeFileSync, unlinkSync,
-  readFileSync, renameSync,
 } from 'fs'
 import { join as pathJoin } from 'path'
 import excelToJson from 'convert-excel-to-json'
+import csv from 'csv-parser'
 import _ from 'lodash'
 import unzipper from 'unzipper'
 import config from '../config'
 import logger from '../logger'
-import RemoveFirstLine from '../utils/removeFirstLine'
+import { N } from '../utils'
+import convertRow, { convertDate } from '../utils/convertRowJson'
 import { STATE_KEYS } from '../utils/state'
 
 const {
-  downloadedFilesDir, dataFileNameXlsx, dataFileNameJson, dataFileNameCsv, headerFileNameCsv, fieldNameFile,
+  downloadedFilesDir, dataFileNameXlsx, dataFileNameJson, dataFileNameCsv, headerFileNameCsv,
 } = config
 
-export default async () => {
+export default async stages => {
+  const { LAST_DEACTIVATED, LAST_MONTHLY, LAST_WEEKLY } = STATE_KEYS
+
   const createFilePath = name => `${downloadedFilesDir}/${name}.zip`
-  const monthlyZipFilepath = createFilePath(STATE_KEYS.LAST_MONTHLY)
-  const weeklyZipFilepath = createFilePath(STATE_KEYS.LAST_WEEKLY)
-  const deactivatedZipFilepath = createFilePath(STATE_KEYS.LAST_DEACTIVATED)
+  const monthlyZipFilepath = createFilePath(LAST_MONTHLY)
+  const weeklyZipFilepath = createFilePath(LAST_WEEKLY)
+  const deactivatedZipFilepath = createFilePath(LAST_DEACTIVATED)
 
-  if (existsSync(monthlyZipFilepath)) {
-    await unzipFile(monthlyZipFilepath, STATE_KEYS.LAST_MONTHLY)
-    await createFieldsNameFile(STATE_KEYS.LAST_MONTHLY)
+  if (_.includes(stages, LAST_DEACTIVATED)) {
+    if (existsSync(deactivatedZipFilepath)) {
+      await unzipFile(deactivatedZipFilepath, LAST_DEACTIVATED)
+      await convertXlsxToJson(LAST_DEACTIVATED, 'Export Worksheet')
+    }
   }
 
-  if (existsSync(weeklyZipFilepath)) {
-    await unzipFile(weeklyZipFilepath, STATE_KEYS.LAST_WEEKLY)
-    await createFieldsNameFile(STATE_KEYS.LAST_WEEKLY)
+  if (_.includes(stages, LAST_MONTHLY)) {
+    if (existsSync(monthlyZipFilepath)) {
+      await unzipFile(monthlyZipFilepath, LAST_MONTHLY)
+      await convertCsv(LAST_MONTHLY)
+    }
   }
 
-  if (existsSync(deactivatedZipFilepath)) {
-    await unzipFile(deactivatedZipFilepath, STATE_KEYS.LAST_DEACTIVATED)
-    await convertXlsxToJson(STATE_KEYS.LAST_DEACTIVATED, 'Export Worksheet')
+  if (_.includes(stages, LAST_WEEKLY)) {
+    if (existsSync(weeklyZipFilepath)) {
+      await unzipFile(weeklyZipFilepath, LAST_WEEKLY)
+      await convertCsv(LAST_WEEKLY)
+    }
   }
 
   async function unzipFile(filepath: string, filename: string): Promise<void> {
@@ -87,9 +96,10 @@ export default async () => {
           rows: 2,
         },
         sheets: [sheet],
-        columnToKey: { A: 'npi', B: 'deactivation_date' },
+        columnToKey: { A: 'npi', B: 'npi_deactivation_date' },
       })
-      writeFileSync(output, JSON.stringify(result[sheet]))
+      result = _.map(result[sheet], row => ({ npi: N(row.npi), npi_deactivation_date: convertDate(row.npi_deactivation_date) }))
+      writeFileSync(output, JSON.stringify(result))
     } catch (e) {
       return logger.info(`${folder} convert to xlsx error`, e)
     }
@@ -98,42 +108,58 @@ export default async () => {
     logger.info(`${folder} data.xlsx converted to json`)
   }
 
-  async function createFieldsNameFile(folder: string): Promise<any> {
+  async function convertCsv(folder: string): Promise<any> {
     const dirPath = `${downloadedFilesDir}/${folder}`
-    if (!existsSync(`${dirPath}/${headerFileNameCsv}`)) {
-      logger.error(`${folder} header file not found`)
-      return flushDirPromisify(dirPath)
-    }
-
     if (!existsSync(`${dirPath}/${dataFileNameCsv}`)) {
       logger.error(`${folder} data file not found`)
       return flushDirPromisify(dirPath)
     }
 
-    let header = await readFileSync(`${dirPath}/${headerFileNameCsv}`, 'utf8')
-    let headerArray = header.split(',')
-    let headerArrayUpdated = [] as any
-    const formatHeader = h => `${h.replace(/[^a-zA-Z0-9 ]/g, '').replace(/ /g, '_').toLowerCase()}\n`
-    _.each(headerArray, h => headerArrayUpdated.push(formatHeader(h)))
-    writeFileSync(`${dirPath}/${fieldNameFile}`, headerArrayUpdated.join(''), 'utf8')
-
-    let inputPath = `${dirPath}/${dataFileNameCsv}`
-    let outputPath = `${dirPath}/_${dataFileNameCsv}`
-
-    await removeHeaderLine(inputPath, outputPath)
-    await unlinkSync(inputPath)
-    await renameSync(outputPath, inputPath)
+    await csvConvertPromisified(`${dirPath}/${dataFileNameCsv}`, dirPath)
+    await unlinkSync(`${dirPath}/${dataFileNameCsv}`)
   }
 }
 
-function removeHeaderLine(input_path, output_path) {
-  return new Promise((resolve, reject) => {
-    let input = createReadStream(input_path)
-    let output = createWriteStream(output_path)
-    input.pipe(RemoveFirstLine()).pipe(output)
-    output.on('finish', () => {
+function csvConvertPromisified(input_path, output_dir_path) {
+  return new Promise(resolve => {
+    const maxFileSize = 100000
+    let count = 0
+    let fileNumber = 1
+    let lastFile = false
+    let input = createReadStream(input_path, { encoding: 'utf8' })
+    let output: any = null
+    let results = [] as any
+    input.pipe(csv({
+      mapHeaders: ({ header: h }) => `${h.replace(/[^a-zA-Z0-9 ]/g, '').replace(/ /g, '_').toLowerCase()}`,
+    })).on('data', async data => {
+      const outputPath = `${output_dir_path}/${fileNumber}_${dataFileNameJson}`
+      if (_.isEmpty(output) && !lastFile) {
+        output = createWriteStream(outputPath, { encoding: 'utf8' })
+      }
+      count++
+      if (!(count % 500)) process.stdout.write(`Converted ${count} rows...\r`)
+      const row = convertRow(data)
+      results.push(row)
+      if (!(results.length % maxFileSize)) {
+        await close(results)
+      }
+    }).on('end', async () => {
+      lastFile = true
+      await close(results)
       resolve()
     })
+    function close(res) {
+      return new Promise(next => {
+        output.write(JSON.stringify(res))
+        output.end()
+        output.on('finish', () => {
+          fileNumber++
+          output = null
+          results = []
+          next()
+        })
+      })
+    }
   })
 }
 
